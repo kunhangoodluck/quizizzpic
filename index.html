@@ -20,7 +20,7 @@
             touch-action: none; 
             /* 讓方塊顯示網格效果 */
             background-image: linear-gradient(to right, #e5e7eb 1px, transparent 1px), linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
-            background-size: 20px 20px; /* 單位格尺寸 (20px x 20px) */
+            background-size: 15px 15px; /* 單位格尺寸 (已縮小至 15px x 15px) */
         }
         /* Mode 1: 剩餘的紅色邊角料 */
         .grid-unit.red-remainder {
@@ -39,14 +39,13 @@
             box-shadow: none !important;
         }
 
-        /* 外層視口：固定高度，允許捲動 */
+        /* 外層視口：自適應高度，允許捲動 */
         .workspace-viewport {
-            height: 800px; 
-            min-height: 70vh; /* 確保在垂直空間大的螢幕上佔用更多空間 */
+            min-height: 70vh; 
             border: 2px dashed #4b5563; /* Darker border */
             background-color: #204038; /* Deep dark green */
             position: relative;
-            overflow: auto; /* 啟用捲動功能 */
+            overflow: auto; /* 預設啟用捲動功能 */
         }
         /* 內層內容：巨大空間，將被縮放 */
         #canvas-container {
@@ -64,12 +63,15 @@
             top: 0;
             left: 0;
             z-index: 25; 
-            /* 預設禁止事件捕捉，讓事件穿透到下層積木 */
             pointer-events: none;
         }
         /* 當繪圖工具被選中時，才啟用事件捕捉 */
         .drawing-active #drawing-layer {
             pointer-events: all;
+        }
+        /* 筆刷預覽 */
+        #brush-preview {
+            z-index: 60; /* 確保在最上層 */
         }
 
         /* 隱藏原生數字輸入框的上下箭頭 */
@@ -101,6 +103,9 @@
         <!-- 訊息/錯誤提示區 -->
         <div id="message-box" class="mb-4 hidden p-3 rounded-lg bg-yellow-100 text-yellow-800 border border-yellow-300"></div>
         
+        <!-- 筆刷預覽 DOM (使用 fixed 定位來跟隨游標) -->
+        <div id="brush-preview" class="absolute pointer-events-none rounded-full border-2 border-white opacity-50 hidden" style="box-shadow: 0 0 5px rgba(255,255,255,0.7); background-color: rgba(255,255,255,0.2); position: fixed;"></div>
+        
         <!-- 模式選擇畫面 -->
         <section id="start-screen" class="flex flex-col items-center justify-center min-h-[50vh] transition-opacity duration-300">
             <h2 class="text-4xl font-bold mb-8 text-gray-700">請選擇操作模式</h2>
@@ -115,7 +120,7 @@
         </section>
 
         <!-- 主要工作區 (預設隱藏) -->
-        <section id="main-workspace" class="hidden transition-opacity duration-300">
+        <section id="main-workspace" class="hidden transition-opacity duration-300 relative"> <!-- ADDED relative here for absolute positioning of open button -->
             <!-- 模式標題和返回按鈕 -->
             <div class="flex justify-between items-center mb-6">
                 <h2 id="mode-title" class="text-3xl font-bold text-gray-700"></h2>
@@ -124,10 +129,28 @@
                 </button>
             </div>
             
+            <!-- 新增的展開按鈕 (當控制面板隱藏時顯示) -->
+            <button onclick="toggleControls()" id="open-controls-btn" class="absolute left-0 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 text-white rounded-r-lg shadow-xl z-50 hidden lg:flex items-center justify-center transform transition-transform duration-300" style="margin-left: -24px;" title="展開控制面板">
+                <!-- Icon for Open (Chevrons Right) -->
+                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 9l3 3m0 0l-3 3m3-3H8"></path>
+                </svg>
+            </button>
+
+
             <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
                 <!-- 控制面板區 (左側) -->
-                <div class="lg:col-span-1 space-y-4 p-4 bg-white rounded-xl shadow-lg h-fit">
-                    <h3 class="text-xl font-semibold border-b pb-2 mb-3">操作控制</h3>
+                <div class="lg:col-span-1 space-y-4 p-4 bg-white rounded-xl shadow-lg h-fit transition-all duration-300" id="control-panel">
+                    <!-- Updated header with toggle button -->
+                    <div class="flex justify-between items-center border-b pb-2 mb-3">
+                        <h3 class="text-xl font-semibold">操作控制</h3>
+                        <button onclick="toggleControls()" id="toggle-controls-btn" class="p-1 rounded-full text-gray-500 hover:bg-gray-100 hidden lg:block" title="收起控制面板">
+                            <!-- Icon for Collapse (Chevrons Left) -->
+                            <svg class="w-6 h-6 transform transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" xmlns="http://www.w3.org/2000/svg">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12h.01M17 12h.01M12 3h.01M12 21h.01" id="toggle-icon"></path>
+                            </svg>
+                        </button>
+                    </div>
 
                     <!-- 模式 1: 大拆小 (切割) 控制項 -->
                     <div id="controls-cut" class="space-y-4 hidden">
@@ -210,7 +233,7 @@
                 </div>
 
                 <!-- 畫布/工作區 (右側) -->
-                <div class="lg:col-span-3">
+                <div class="lg:col-span-3 transition-all duration-300" id="canvas-column">
                     <div id="canvas-viewport" class="workspace-viewport rounded-xl shadow-inner relative">
                         <div id="canvas-container" class="workspace-content">
                              <!-- 繪圖層 (新增) -->
@@ -261,7 +284,7 @@
 
     <script>
         // ==== 全局狀態與配置 ====
-        const GRID_SIZE = 20; // 每個單位方格在螢幕上的像素大小
+        const GRID_SIZE = 15; // 每個單位方格在螢幕上的像素大小 (已縮小至 15px)
         const MIN_SCALE = 0.6;  // 最小縮放比例
         const MAX_SCALE = 2.0;  // 最大縮放比例
 
@@ -286,11 +309,15 @@
         let currentTool = 'select'; // 預設為 'select'
         let brushSize = 5;
         let lastX = 0, lastY = 0;
+        
+        // ==== 佈局狀態 (新增) ====
+        let isControlsVisible = true; 
 
 
         // ==== 縮放功能 (Slider) ====
         const canvasContainer = document.getElementById('canvas-container');
         const canvasViewport = document.getElementById('canvas-viewport');
+        const brushPreview = document.getElementById('brush-preview'); // 獲取筆刷預覽 DOM
 
         const updateScaleDisplay = () => {
             // 使用 CSS Transform 縮放內容
@@ -304,13 +331,79 @@
             updateScaleDisplay();
         };
 
+        // 輔助函數：將視圖捲動到虛擬畫布的中心
+        const centerViewport = () => {
+            // 虛擬畫布中心點 (1500, 1500)
+            const targetX = 1500;
+            const targetY = 1500;
+            
+            // 取得視口實際的寬高
+            const viewportWidth = canvasViewport.clientWidth;
+            const viewportHeight = canvasViewport.clientHeight;
+            
+            // 計算滾動位置 = 目標中心點 - 視口一半
+            canvasViewport.scrollLeft = targetX - viewportWidth / 2;
+            canvasViewport.scrollTop = targetY - viewportHeight / 2;
+        };
+        
+        // ==== 佈局切換功能 (修正) ====
+        const toggleControls = () => {
+            isControlsVisible = !isControlsVisible;
+            const panel = document.getElementById('control-panel');
+            const canvasCol = document.getElementById('canvas-column');
+            const internalToggleBtn = document.getElementById('toggle-controls-btn');
+            const externalOpenBtn = document.getElementById('open-controls-btn'); // 新增的按鈕
+
+            if (isControlsVisible) {
+                // 展開控制面板
+                panel.classList.remove('hidden');
+                panel.classList.add('lg:col-span-1');
+                
+                // 縮小畫布欄
+                canvasCol.classList.remove('lg:col-span-4');
+                canvasCol.classList.add('lg:col-span-3');
+
+                // 隱藏外部按鈕, 顯示內部按鈕
+                externalOpenBtn.classList.add('hidden');
+                internalToggleBtn.classList.remove('hidden'); // 確保內部收起按鈕顯示
+                
+                // 更新按鈕圖示 (收起 <<)
+                internalToggleBtn.querySelector('svg path').setAttribute('d', 'M11 15l-3-3m0 0l3-3m-3 3h8M3 12h.01M17 12h.01M12 3h.01M12 21h.01'); 
+                internalToggleBtn.title = "收起控制面板";
+                
+            } else {
+                // 收起控制面板
+                panel.classList.remove('lg:col-span-1');
+                panel.classList.add('hidden'); 
+                
+                // 展開畫布欄至滿寬
+                canvasCol.classList.remove('lg:col-span-3');
+                canvasCol.classList.add('lg:col-span-4');
+                
+                // 顯示外部按鈕, 隱藏內部按鈕
+                internalToggleBtn.classList.add('hidden');
+                externalOpenBtn.classList.remove('hidden');
+                // 確保浮動按鈕在小尺寸螢幕上不顯示
+                 if (window.innerWidth >= 1024) { 
+                    externalOpenBtn.classList.remove('hidden');
+                 }
+                
+            }
+            
+            // 讓佈局轉換完成後重新置中畫布，以提供順暢的體驗
+            setTimeout(centerViewport, 300); 
+        };
+
+
         // 啟動時確保拉桿和顯示同步，並初始化繪圖工具
         document.addEventListener('DOMContentLoaded', () => {
             updateScaleDisplay();
             
+            // 畫布居中定位
+            centerViewport(); 
+
             // 繪圖工具初始化
             drawingCanvas = document.getElementById('drawing-layer');
-            // 設定 canvas 尺寸與父容器 (3000x3000) 一致
             drawingCanvas.width = 3000;
             drawingCanvas.height = 3000;
             
@@ -318,7 +411,7 @@
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
             ctx.lineWidth = brushSize;
-            ctx.strokeStyle = 'white'; // 預設粉筆顏色
+            ctx.strokeStyle = 'white'; 
             
             // 初始設定為選取工具 (select)
             setTool('select'); 
@@ -328,10 +421,49 @@
             drawingCanvas.addEventListener('pointermove', draw);
             drawingCanvas.addEventListener('pointerup', stopDraw);
             drawingCanvas.addEventListener('pointerout', stopDraw);
+            
+            // 綁定筆刷預覽移動 (當工具選取但未開始畫時)
+            canvasViewport.addEventListener('pointermove', (e) => {
+                if (currentTool !== 'select' && !isDrawing) {
+                    updateBrushPreviewPosition(e);
+                }
+            });
+            canvasViewport.addEventListener('pointerleave', hideBrushPreview);
         });
         
         // ==== 繪圖工具邏輯 (新增) ====
         
+        // 顯示筆刷預覽 (第二點修正)
+        const updateBrushPreviewPosition = (e) => {
+            if (currentTool === 'select') {
+                 hideBrushPreview();
+                 return;
+            }
+            
+            const viewportRect = canvasViewport.getBoundingClientRect();
+            
+            // 檢查游標是否在 viewport 內
+            if (e.clientX < viewportRect.left || e.clientX > viewportRect.right ||
+                e.clientY < viewportRect.top || e.clientY > viewportRect.bottom) {
+                 hideBrushPreview();
+                 return;
+            }
+
+            const size = brushSize * currentScale * 2; // 筆刷大小 * 2 (直徑) * 縮放比例
+            
+            brushPreview.style.width = `${size}px`;
+            brushPreview.style.height = `${size}px`;
+            // 使用 fixed 定位，減去 viewport 的 clientLeft/Top，使其跟隨游標在 viewport 內
+            brushPreview.style.left = `${e.clientX - size / 2}px`;
+            brushPreview.style.top = `${e.clientY - size / 2}px`;
+            brushPreview.classList.remove('hidden');
+        };
+
+        const hideBrushPreview = () => {
+            brushPreview.classList.add('hidden');
+        };
+
+
         const setTool = (tool) => {
             // 取消拖曳操作，避免衝突
             draggingShape = null; 
@@ -344,14 +476,17 @@
             });
             document.getElementById(`${tool}-tool`).classList.add('tool-active');
 
-            // --- 核心衝突解決邏輯 ---
+            // --- 核心衝突解決邏輯 (繪圖時鎖定畫布) ---
             if (tool === 'select') {
-                // 選取模式: 移除 drawing-active class，讓事件穿透 canvas
+                // 選取模式: 讓事件穿透 canvas，恢復捲動
                 canvasContainer.classList.remove('drawing-active');
+                canvasViewport.style.overflow = 'auto'; 
+                hideBrushPreview();
                 showMessage('已選取 **選取工具** (可拖曳積木)', false);
             } else {
-                // 繪圖模式: 加入 drawing-active class，讓 canvas 捕捉事件
+                // 繪圖模式: 讓 canvas 捕捉事件，鎖定捲動
                 canvasContainer.classList.add('drawing-active');
+                canvasViewport.style.overflow = 'hidden'; 
                 
                 // 設定繪圖/橡皮擦模式
                 ctx.globalCompositeOperation = tool === 'chalk' ? 'source-over' : 'destination-out';
@@ -379,7 +514,6 @@
         };
 
         const startDraw = (e) => {
-            // 在 CSS 中已控制事件穿透，此處只需檢查是否處於繪圖模式
             if (currentTool === 'select') return;
 
             e.preventDefault(); 
@@ -396,11 +530,18 @@
             ctx.lineTo(lastX + 0.5, lastY + 0.5); 
             ctx.stroke();
             
+            // 顯示預覽
+            updateBrushPreviewPosition(e);
         };
 
         const draw = (e) => {
-            if (!isDrawing || currentTool === 'select') return;
+            if (currentTool === 'select') return;
             e.preventDefault();
+            
+            // 更新預覽位置
+            updateBrushPreviewPosition(e);
+            
+            if (!isDrawing) return;
             
             const coords = getCanvasCoords(e);
 
@@ -615,6 +756,7 @@
             document.getElementById('supply-area').innerHTML = '';
             clearDrawing(); // 清除塗鴉層 (新增)
             renderCanvas();
+            centerViewport(); // 清除後重新定位到中間
             closeConfirmModal();
             showMessage('畫面已重置。', false);
         };
@@ -629,11 +771,15 @@
         
         // 輔助函數：找到一個不與現有形狀重疊的起始位置
         const findNewPlacement = (l, w) => {
-            // 由於內容區是 3000x3000，我們只在左上角 (0,0) 附近的區域尋找
-            const searchLimitUnits = 50; 
-
-            for (let y = 1; y < searchLimitUnits - w; y++) {
-                for (let x = 1; x < searchLimitUnits - l; x++) {
+            // 由於內容區是 3000x3000，我們只在畫布中心附近尋找
+            const centerOffset = 1500;
+            const searchRange = 10; // 10 units wide/tall search around center
+            const startXUnit = Math.floor((centerOffset / GRID_SIZE) - searchRange / 2);
+            const startYUnit = Math.floor((centerOffset / GRID_SIZE) - searchRange / 2);
+            const endUnit = Math.floor((centerOffset / GRID_SIZE) + searchRange / 2);
+            
+            for (let y = startYUnit; y < endUnit - w; y++) {
+                for (let x = startXUnit; x < endUnit - l; x++) {
                     const newShapeBoundary = {
                         x: x * GRID_SIZE,
                         y: y * GRID_SIZE,
@@ -657,7 +803,8 @@
                     }
                 }
             }
-            return { x: 20, y: 20 }; // 如果找不到空間，使用預設值
+            // 預設位置 (若中心附近找不到空間)
+            return { x: centerOffset, y: centerOffset }; 
         };
 
 
@@ -908,7 +1055,7 @@
 
         // 拖曳開始
         const startDrag = (e, shape, isNew = false, el = null) => {
-            // 如果當前是繪圖工具，則阻止積木拖曳 (雙重檢查，CSS 應已處理)
+            // 如果當前是繪圖工具，則阻止積木拖曳 (選取工具邏輯在 setTool 中處理)
             if (currentTool !== 'select') return;
             
             // 所有非供應區的積木都可以拖曳
@@ -1173,6 +1320,7 @@
         window.onDrag = onDrag;
         window.endDrag = endDrag; 
         window.handleScaleChange = handleScaleChange; // 暴露縮放功能
+        window.toggleControls = toggleControls; // 暴露佈局切換功能
         
         // 暴露繪圖工具功能
         window.setTool = setTool;
