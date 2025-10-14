@@ -20,7 +20,7 @@
             touch-action: none; 
             /* 讓方塊顯示網格效果 */
             background-image: linear-gradient(to right, #e5e7eb 1px, transparent 1px), linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
-            background-size: 50px 50px;
+            background-size: 20px 20px; /* 單位格尺寸 (20px x 20px) */
         }
         /* Mode 1: 剩餘的紅色邊角料 */
         .grid-unit.red-remainder {
@@ -36,18 +36,42 @@
         .cut-original {
             background-color: rgba(209, 213, 219, 0.4) !important; /* Gray/transparent */
             border: 2px dashed #9ca3af !important; /* Dashed grey border */
-            pointer-events: none; /* 無法點擊或拖曳 */
             box-shadow: none !important;
         }
 
-        .workspace {
-            /* 確保工作區足夠大，方便拖曳 */
-            min-height: 800px; 
-            border: 2px dashed #d1d5db; /* gray-300 */
-            background-color: #f9fafb; /* gray-50 */
+        /* 外層視口：固定高度，允許捲動 */
+        .workspace-viewport {
+            height: 800px; 
+            min-height: 70vh; /* 確保在垂直空間大的螢幕上佔用更多空間 */
+            border: 2px dashed #4b5563; /* Darker border */
+            background-color: #204038; /* Deep dark green */
             position: relative;
-            overflow: hidden; /* 防止內容溢出導致的滾動條 */
+            overflow: auto; /* 啟用捲動功能 */
         }
+        /* 內層內容：巨大空間，將被縮放 */
+        #canvas-container {
+            width: 3000px; /* 邏輯上的大空間 */
+            height: 3000px; /* 邏輯上的大空間 */
+            position: relative;
+            transform-origin: top left;
+            transition: transform 0.2s ease;
+            /* 確保背景網格對齊 content 而非 viewport */
+            background-color: #204038; /* Deep dark green */
+        }
+        /* 繪圖圖層，覆蓋在積木下方 */
+        #drawing-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 25; 
+            /* 預設禁止事件捕捉，讓事件穿透到下層積木 */
+            pointer-events: none;
+        }
+        /* 當繪圖工具被選中時，才啟用事件捕捉 */
+        .drawing-active #drawing-layer {
+            pointer-events: all;
+        }
+
         /* 隱藏原生數字輸入框的上下箭頭 */
         input[type='number']::-webkit-inner-spin-button,
         input[type='number']::-webkit-outer-spin-button {
@@ -57,18 +81,19 @@
         .dialog {
             z-index: 50;
         }
+        .tool-active {
+            box-shadow: 0 0 0 3px #3b82f6; /* Ring-blue-500 */
+            background-color: #3b82f6;
+            color: white;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen font-sans antialiased text-gray-800">
 
-    <!-- 頂部標題和導航 -->
+    <!-- 頂部標題 -->
     <header class="bg-white shadow-lg sticky top-0 z-40">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-            <h1 class="text-3xl font-extrabold text-indigo-600">幾何互動教具</h1>
-            <div id="user-info" class="text-sm text-gray-500">
-                <span id="auth-status" class="inline-block px-3 py-1 bg-gray-100 rounded-full">連線中...</span>
-                <span id="user-id-display" class="ml-2 font-mono text-xs hidden">ID: N/A</span>
-            </div>
+            <h1 class="text-3xl font-extrabold text-indigo-600">幾何互動教具：最大公因數體驗</h1>
         </div>
     </header>
 
@@ -81,10 +106,10 @@
             <h2 class="text-4xl font-bold mb-8 text-gray-700">請選擇操作模式</h2>
             <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-8">
                 <button onclick="setMode('cut')" class="mode-btn bg-indigo-600 hover:bg-indigo-700 text-white p-6 rounded-xl shadow-xl transition transform hover:scale-[1.02] text-2xl font-semibold w-full sm:w-64">
-                    大拆小 (切割分解)
+                    大拆小 (體驗因數與餘數)
                 </button>
                 <button onclick="setMode('compose')" class="mode-btn bg-teal-600 hover:bg-teal-700 text-white p-6 rounded-xl shadow-xl transition transform hover:scale-[1.02] text-2xl font-semibold w-full sm:w-64">
-                    小組大 (合成組合)
+                    小組大 (探索正方形組合)
                 </button>
             </div>
         </section>
@@ -115,7 +140,7 @@
                             </button>
                         </div>
                         <p class="text-sm text-gray-500 pt-2 border-t mt-4">
-                            提示: 點擊畫布上的 **白色** 長方形進行切割操作。
+                            **GCD 體驗：** 嘗試找到一個正方形邊長，能將長和寬都切割到剛好，使紅色剩餘區為空。這個最大的邊長就是最大公因數。
                         </p>
                     </div>
 
@@ -139,36 +164,59 @@
                         </div>
                     </div>
 
+                    <!-- 繪圖工具區塊 (更新) -->
                     <div class="pt-4 border-t space-y-3">
-                         <!-- 儲存/新增畫面按鈕 -->
-                        <button onclick="saveState()" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 rounded-lg transition duration-150 flex items-center justify-center">
-                            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"></path></svg>
-                            儲存畫面 (雲端)
+                        <h4 class="text-lg font-medium border-b pb-2">繪圖工具</h4>
+                        <div class="flex space-x-2">
+                             <!-- 新增 選取工具 -->
+                            <button id="select-tool" onclick="setTool('select')" class="w-1/3 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition duration-150 flex items-center justify-center tool-active">
+                                選取
+                            </button>
+                            <button id="chalk-tool" onclick="setTool('chalk')" class="w-1/3 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition duration-150 flex items-center justify-center">
+                                粉筆
+                            </button>
+                            <button id="eraser-tool" onclick="setTool('eraser')" class="w-1/3 bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 rounded-lg transition duration-150 flex items-center justify-center">
+                                橡皮擦
+                            </button>
+                        </div>
+                        <div class="space-y-1">
+                            <label for="brush-size" class="block text-sm font-medium text-gray-700">筆刷大小 (<span id="brush-size-display">5</span>)</label>
+                            <input type="range" id="brush-size" min="2" max="20" step="1" value="5" oninput="updateBrushSize(this.value)" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                        </div>
+                         <button onclick="clearDrawing()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-lg transition duration-150 flex items-center justify-center">
+                            清除塗鴉
                         </button>
+                    </div>
+
+                    <div class="pt-4 border-t space-y-3">
+                         <h4 class="text-lg font-medium border-b pb-2">畫布縮放/畫面操作</h4>
+                        <!-- 縮放拉桿 (取代原本的 +/- 按鈕) -->
+                         <div class="space-y-1">
+                            <label id="scale-label" class="block text-sm font-medium text-gray-700">畫布縮放 (100%)</label>
+                            <input type="range" id="scale-slider" min="0.6" max="2.0" step="0.1" value="1.0" oninput="handleScaleChange(event)" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer range-lg">
+                        </div>
+
+                         <!-- 畫面操作按鈕 -->
                         <button onclick="downloadScreen()" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 rounded-lg transition duration-150 flex items-center justify-center">
                              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4m-6-4l-3 3m0 0l-3-3m3 3V3"></path></svg>
                             下載畫面 (圖片)
                         </button>
+                        <!-- 清除畫面按鈕 (已修正) -->
                         <button onclick="confirmNewScreen()" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-lg transition duration-150 flex items-center justify-center">
                              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            新增畫面 (清除)
+                            清除畫面
                         </button>
                     </div>
-
-                    <!-- 載入歷史記錄 -->
-                    <div class="pt-4 border-t space-y-2">
-                        <h4 class="text-lg font-medium">載入記錄</h4>
-                        <select id="save-select" class="w-full p-2 border border-gray-300 rounded-lg" onchange="loadState(this.value)">
-                            <option value="" disabled selected>選擇要載入的記錄</option>
-                        </select>
-                    </div>
-
                 </div>
 
                 <!-- 畫布/工作區 (右側) -->
                 <div class="lg:col-span-3">
-                    <div id="canvas-container" class="workspace rounded-xl shadow-inner relative">
-                        <!-- 幾何圖形將在此處渲染 -->
+                    <div id="canvas-viewport" class="workspace-viewport rounded-xl shadow-inner relative">
+                        <div id="canvas-container" class="workspace-content">
+                             <!-- 繪圖層 (新增) -->
+                            <canvas id="drawing-layer"></canvas>
+                            <!-- 幾何圖形將在此處渲染 -->
+                        </div>
                     </div>
                 </div>
             </div>
@@ -196,140 +244,185 @@
         </div>
     </div>
     
-    <!-- 警告/確認彈窗 (用於新增畫面) -->
+    <!-- 警告/確認彈窗 (用於清除畫面) -->
     <div id="confirm-modal" class="dialog fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center p-4">
         <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm space-y-4">
             <h3 class="text-xl font-bold text-red-600">確認清除畫面</h3>
             <p>您確定要清除目前畫布上的所有內容，並開啟一個新的畫面嗎？此操作無法撤銷。</p>
             <div class="flex justify-end space-x-3">
                 <button onclick="closeConfirmModal()" class="px-4 py-2 bg-gray-300 hover:bg-gray-400 rounded-lg">取消</button>
-                <button onclick="newScreen()" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg">確認新增</button>
+            <button onclick="newScreen(false)" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg">確認清除</button> 
             </div>
         </div>
     </div>
 
 
-    <!-- 引入 Firebase JS SDK -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        
-        // 設置日誌級別為 Debug
-        setLogLevel('Debug');
-
-        // ==== 全局變數初始化 ====
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let db, auth;
-        let currentUserId = null;
-        let isAuthReady = false;
-
-        // 將重要變數和 Firebase 函式附加到 window 對象，以便在非 module 腳本中存取 (Fix for ReferenceError)
-        window.db = db;
-        window.auth = auth;
-        window.currentUserId = currentUserId;
-        // 將 Firestore 核心函式暴露給全局
-        window.query = query;
-        window.collection = collection;
-        window.onSnapshot = onSnapshot;
-        window.serverTimestamp = serverTimestamp;
-        window.doc = doc; // 新增 doc
-        window.getDoc = getDoc; // 新增 getDoc
-        window.addDoc = addDoc; // 新增 addDoc
-
-        // ==== Firebase 初始化與認證 ====
-        const initFirebase = async () => {
-            if (Object.keys(firebaseConfig).length === 0) {
-                console.error("Firebase 配置缺失。儲存功能將無法使用。");
-                document.getElementById('auth-status').textContent = '連線失敗 (配置缺失)';
-                return;
-            }
-
-            const app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-            
-            window.db = db;
-            window.auth = auth;
-
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Firebase 認證失敗:", error);
-                document.getElementById('auth-status').textContent = '認證失敗';
-            }
-
-            onAuthStateChanged(auth, (user) => {
-                if (user) {
-                    currentUserId = user.uid;
-                    window.currentUserId = user.uid;
-                    document.getElementById('auth-status').textContent = '已連線';
-                    document.getElementById('user-id-display').textContent = `ID: ${currentUserId}`;
-                    document.getElementById('user-id-display').classList.remove('hidden');
-                    isAuthReady = true;
-                    // 認證成功後開始監聽資料
-                    if (window.startStateListener) {
-                         window.startStateListener();
-                    }
-                } else {
-                    currentUserId = crypto.randomUUID(); // 未認證時使用隨機 ID
-                    window.currentUserId = currentUserId;
-                    document.getElementById('auth-status').textContent = '匿名連線';
-                    document.getElementById('user-id-display').textContent = `ID: ${currentUserId.substring(0, 8)}...`;
-                    document.getElementById('user-id-display').classList.remove('hidden');
-                    isAuthReady = true;
-                    if (window.startStateListener) {
-                         window.startStateListener();
-                    }
-                }
-            });
-        };
-
-        initFirebase();
-    </script>
+    <!-- 移除 Firebase 相關腳本區塊 -->
 
     <script>
         // ==== 全局狀態與配置 ====
-        const GRID_SIZE = 50; // 每個單位方格在螢幕上的像素大小 (50px x 50px)
+        const GRID_SIZE = 20; // 每個單位方格在螢幕上的像素大小
+        const MIN_SCALE = 0.6;  // 最小縮放比例
+        const MAX_SCALE = 2.0;  // 最大縮放比例
+
         let currentState = {
             mode: null, // 'cut' or 'compose'
             shapes: [],
-            dims: { length: 0, width: 0 } // For Mode 1: initial dimensions. For Mode 2: unit dimensions.
+            dims: { length: 0, width: 0 } 
         };
         let draggingShape = null;
         let dragOffset = { x: 0, y: 0 };
         let cutTargetShape = null; // 儲存 Mode 1 中被點擊的長方形
+        let currentScale = 1.0; // 當前縮放比例
+        let dragStartPos = { x: 0, y: 0 }; // 追蹤拖曳起始點，用於區分點擊或拖曳
 
-        // 訪問 window 上的 Firebase 變數
-        const getDB = () => window.db;
-        const getAuth = () => window.auth;
-        const getUserId = () => window.currentUserId;
-        
-        // 確保可以存取 FireStore 函式 (FIX: 避免 destructuring，直接從 window 取得以確保時序正確)
-        const query = window.query;
-        const collection = window.collection;
-        const onSnapshot = window.onSnapshot;
-        const serverTimestamp = window.serverTimestamp;
-        const doc = window.doc;
-        const getDoc = window.getDoc;
-        const addDoc = window.addDoc;
+        // 用於 Mode 1 群組拖曳
+        let groupToMove = [];
+        let groupOffset = { x: 0, y: 0 };
+
+        // ==== 繪圖工具狀態 (新增) ====
+        let drawingCanvas, ctx;
+        let isDrawing = false;
+        let currentTool = 'select'; // 預設為 'select'
+        let brushSize = 5;
+        let lastX = 0, lastY = 0;
 
 
-        // Firestore 路徑
-        const getCollectionPath = () => {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const userId = getUserId();
-            // 私人資料路徑
-            return `artifacts/${appId}/users/${userId}/geometry_tool`;
+        // ==== 縮放功能 (Slider) ====
+        const canvasContainer = document.getElementById('canvas-container');
+        const canvasViewport = document.getElementById('canvas-viewport');
+
+        const updateScaleDisplay = () => {
+            // 使用 CSS Transform 縮放內容
+            canvasContainer.style.transform = `scale(${currentScale})`;
+            document.getElementById('scale-slider').value = currentScale.toFixed(1);
+            document.getElementById('scale-label').textContent = `畫布縮放 (${Math.round(currentScale * 100)}%)`;
         };
+
+        const handleScaleChange = (event) => {
+            currentScale = parseFloat(event.target.value);
+            updateScaleDisplay();
+        };
+
+        // 啟動時確保拉桿和顯示同步，並初始化繪圖工具
+        document.addEventListener('DOMContentLoaded', () => {
+            updateScaleDisplay();
+            
+            // 繪圖工具初始化
+            drawingCanvas = document.getElementById('drawing-layer');
+            // 設定 canvas 尺寸與父容器 (3000x3000) 一致
+            drawingCanvas.width = 3000;
+            drawingCanvas.height = 3000;
+            
+            ctx = drawingCanvas.getContext('2d');
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.lineWidth = brushSize;
+            ctx.strokeStyle = 'white'; // 預設粉筆顏色
+            
+            // 初始設定為選取工具 (select)
+            setTool('select'); 
+
+            // 綁定繪圖事件
+            drawingCanvas.addEventListener('pointerdown', startDraw);
+            drawingCanvas.addEventListener('pointermove', draw);
+            drawingCanvas.addEventListener('pointerup', stopDraw);
+            drawingCanvas.addEventListener('pointerout', stopDraw);
+        });
+        
+        // ==== 繪圖工具邏輯 (新增) ====
+        
+        const setTool = (tool) => {
+            // 取消拖曳操作，避免衝突
+            draggingShape = null; 
+            
+            currentTool = tool;
+            
+            const toolButtons = ['select', 'chalk', 'eraser'];
+            toolButtons.forEach(t => {
+                document.getElementById(`${t}-tool`).classList.remove('tool-active');
+            });
+            document.getElementById(`${tool}-tool`).classList.add('tool-active');
+
+            // --- 核心衝突解決邏輯 ---
+            if (tool === 'select') {
+                // 選取模式: 移除 drawing-active class，讓事件穿透 canvas
+                canvasContainer.classList.remove('drawing-active');
+                showMessage('已選取 **選取工具** (可拖曳積木)', false);
+            } else {
+                // 繪圖模式: 加入 drawing-active class，讓 canvas 捕捉事件
+                canvasContainer.classList.add('drawing-active');
+                
+                // 設定繪圖/橡皮擦模式
+                ctx.globalCompositeOperation = tool === 'chalk' ? 'source-over' : 'destination-out';
+                ctx.strokeStyle = tool === 'chalk' ? 'white' : 'rgba(0,0,0,1)'; 
+                ctx.lineWidth = brushSize;
+
+                showMessage(`已選取 **${tool === 'chalk' ? '粉筆' : '橡皮擦'}** (可繪圖)`, false);
+            }
+        };
+        
+        const updateBrushSize = (size) => {
+            brushSize = parseInt(size);
+            document.getElementById('brush-size-display').textContent = brushSize;
+            ctx.lineWidth = brushSize;
+        };
+
+        const getCanvasCoords = (e) => {
+            const viewportRect = canvasViewport.getBoundingClientRect();
+            
+            // 計算點擊點在【未縮放】的內容區的座標
+            const clientXUnscaled = (e.clientX - viewportRect.left + canvasViewport.scrollLeft) / currentScale;
+            const clientYUnscaled = (e.clientY - viewportRect.top + canvasViewport.scrollTop) / currentScale;
+            
+            return { x: clientXUnscaled, y: clientYUnscaled };
+        };
+
+        const startDraw = (e) => {
+            // 在 CSS 中已控制事件穿透，此處只需檢查是否處於繪圖模式
+            if (currentTool === 'select') return;
+
+            e.preventDefault(); 
+            e.stopPropagation(); 
+
+            isDrawing = true;
+            const coords = getCanvasCoords(e);
+            lastX = coords.x;
+            lastY = coords.y;
+            
+            // 立即畫一個點
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(lastX + 0.5, lastY + 0.5); 
+            ctx.stroke();
+            
+        };
+
+        const draw = (e) => {
+            if (!isDrawing || currentTool === 'select') return;
+            e.preventDefault();
+            
+            const coords = getCanvasCoords(e);
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(coords.x, coords.y);
+            ctx.stroke();
+
+            lastX = coords.x;
+            lastY = coords.y;
+        };
+
+        const stopDraw = () => {
+            isDrawing = false;
+        };
+        
+        const clearDrawing = () => {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            showMessage('塗鴉已清除。', false);
+        };
+
 
         // ==== UI/彈窗工具函數 ====
         const messageBox = document.getElementById('message-box');
@@ -348,7 +441,7 @@
             document.getElementById('start-screen').classList.remove('hidden');
             document.getElementById('main-workspace').classList.add('hidden');
             currentState.mode = null;
-            newScreen(false); // 清除畫布但不彈出確認窗
+            newScreen(false); 
         };
 
         const setMode = (mode) => {
@@ -361,37 +454,55 @@
             const composeControls = document.getElementById('controls-compose');
 
             if (mode === 'cut') {
-                titleElement.textContent = '模式：大拆小 (切割分解)';
+                titleElement.textContent = '模式：大拆小 (體驗因數與餘數)';
                 cutControls.classList.remove('hidden');
                 composeControls.classList.add('hidden');
             } else {
-                titleElement.textContent = '模式：小組大 (合成組合)';
+                titleElement.textContent = '模式：小組大 (探索正方形組合)';
                 cutControls.classList.add('hidden');
                 composeControls.classList.remove('hidden');
             }
             newScreen(false);
         };
 
-        // ==== 畫面下載功能 (新需求) ====
+        // ==== 畫面下載功能 ====
         const downloadScreen = () => {
             showMessage('正在捕捉畫面並下載...', false);
-            // 使用 html2canvas 捕捉整個工作區 (canvas-container)
-            const targetElement = document.getElementById('canvas-container');
+            // 捕捉的目標是包含內容的 container
+            const targetElement = canvasContainer; 
             
-            // 暫時隱藏 ID 顯示，讓畫面更乾淨
-            document.getElementById('user-info').style.opacity = 0; 
-
-            // 將畫布容器設置為白色背景，避免截圖時背景透明
+            // 確保背景為白色
             targetElement.style.backgroundColor = '#ffffff';
+            
+            // 暫時重置縮放，確保截圖尺寸正確
+            const originalScale = currentScale;
+            targetElement.style.transform = `scale(1.0)`;
+
+            // 調整 canvas 的實際大小，使其剛好包住所有積木
+            let maxW = 0, maxH = 0;
+            currentState.shapes.filter(s => s.type !== 'supply').forEach(s => {
+                maxW = Math.max(maxW, s.x + s.l * GRID_SIZE);
+                maxH = Math.max(maxH, s.y + s.w * GRID_SIZE);
+            });
+            const originalWidth = targetElement.style.width;
+            const originalHeight = targetElement.style.height;
+            
+            targetElement.style.width = `${maxW + 40}px`; // 留出邊界
+            targetElement.style.height = `${maxH + 40}px`;
 
             html2canvas(targetElement, { 
-                scale: 2, // 提高解析度
+                scale: 2, 
                 useCORS: true, 
+                // 為了讓 html2canvas 處理整個大的內容區
+                width: maxW + 40,
+                height: maxH + 40
             }).then(canvas => {
-                // 恢復 ID 顯示和背景色
-                document.getElementById('user-info').style.opacity = 1;
-                targetElement.style.backgroundColor = '#f9fafb';
-
+                // 恢復背景色、尺寸和縮放
+                targetElement.style.backgroundColor = '#204038'; // 恢復深綠色
+                targetElement.style.transform = `scale(${originalScale})`;
+                targetElement.style.width = originalWidth;
+                targetElement.style.height = originalHeight;
+                
                 // 轉換為圖片連結並下載
                 const image = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
                 const link = document.createElement('a');
@@ -401,107 +512,27 @@
                 showMessage('畫面下載完成！', false);
             }).catch(e => {
                 console.error("畫面下載失敗: ", e);
+                // 確保狀態被恢復
+                targetElement.style.backgroundColor = '#204038'; // 恢復深綠色
+                targetElement.style.transform = `scale(${originalScale})`;
+                targetElement.style.width = originalWidth;
+                targetElement.style.height = originalHeight;
                 showMessage('下載畫面失敗，請確保畫布上有內容。', true);
             });
         };
 
 
-        // ==== Firebase 儲存/載入邏輯 ====
-
-        // 開始監聽用戶的儲存記錄
-        window.startStateListener = () => {
-            if (!getDB()) return; // 確保 db 已初始化
-            
-            const q = query(collection(getDB(), getCollectionPath())); 
-            
-            onSnapshot(q, (snapshot) => {
-                const saveSelect = document.getElementById('save-select');
-                saveSelect.innerHTML = '<option value="" disabled selected>選擇要載入的記錄</option>';
-                
-                snapshot.docs.forEach(doc => {
-                    const data = doc.data();
-                    const option = document.createElement('option');
-                    option.value = doc.id;
-                    const timestamp = data.timestamp ? new Date(data.timestamp.seconds * 1000).toLocaleString() : '未知時間';
-                    option.textContent = `${data.mode === 'cut' ? '切割' : '合成'} - ${timestamp}`;
-                    saveSelect.appendChild(option);
-                });
-                showMessage('歷史記錄已更新。', false);
-            }, (error) => {
-                console.error("Error listening to documents: ", error);
-                showMessage('無法載入歷史記錄。請檢查連線。', true);
-            });
-        };
-
-        // 載入儲存記錄
-        const loadState = async (docId) => {
-            if (!docId || !getDB()) return;
-
-            try {
-                showMessage('正在載入畫面...', false);
-                const docRef = doc(getDB(), getCollectionPath(), docId);
-                const docSnap = await getDoc(docRef);
-
-                if (docSnap.exists()) {
-                    const data = docSnap.data();
-                    
-                    // 設定模式
-                    setMode(data.mode); 
-                    
-                    // 恢復狀態
-                    currentState.mode = data.mode;
-                    currentState.shapes = data.shapes;
-                    currentState.dims = data.dims;
-
-                    // 重新渲染畫布
-                    renderCanvas();
-                    showMessage('畫面載入成功！', false);
-                } else {
-                    showMessage('找不到該記錄。', true);
-                }
-            } catch (e) {
-                console.error("載入狀態時發生錯誤: ", e);
-                showMessage('載入狀態失敗。', true);
-            }
-        };
-
-        // 儲存目前狀態 (雲端)
-        const saveState = async () => {
-            if (!getDB() || !currentState.mode) {
-                showMessage('請先選擇模式並操作畫布。', true);
-                return;
-            }
-            if (currentState.shapes.length === 0) {
-                 showMessage('畫布為空，無法儲存。', true);
-                 return;
-            }
-
-            try {
-                showMessage('正在儲存畫面至雲端...', false);
-                
-                const dataToSave = {
-                    mode: currentState.mode,
-                    shapes: currentState.shapes,
-                    dims: currentState.dims,
-                    timestamp: serverTimestamp()
-                };
-
-                await addDoc(collection(getDB(), getCollectionPath()), dataToSave);
-
-                showMessage('畫面儲存成功 (雲端)！', false);
-            } catch (e) {
-                console.error("儲存狀態時發生錯誤: ", e);
-                showMessage('儲存狀態失敗。', true);
-            }
-        };
-
         // ==== 核心畫布渲染與互動 ====
-        const canvasContainer = document.getElementById('canvas-container');
-
+        
         const renderCanvas = () => {
             canvasContainer.innerHTML = '';
             
-            // 渲染所有形狀
+            // 1. 先把繪圖層放回去
+            if (drawingCanvas) {
+                 canvasContainer.appendChild(drawingCanvas);
+            }
+            
+            // 2. 渲染所有形狀
             currentState.shapes.forEach(shape => {
                 const el = document.createElement('div');
                 el.id = shape.id;
@@ -514,17 +545,17 @@
                 el.style.top = `${shape.y}px`;
                 el.style.zIndex = shape.type === 'supply' ? 10 : 30; // 供應區在下方
 
-                // Mode 1: 比較切法 - 處理已切割的原長方形 (線框)
-                if (currentState.mode === 'cut' && shape.type === 'initial' && shape.isCut) {
-                    el.classList.add('cut-original'); // 使用 CSS 處理半透明線框
-                    el.style.zIndex = 10; 
-                } 
-                // Mode 1: 待切割的原長方形
-                else if (currentState.mode === 'cut' && shape.type === 'initial' && !shape.isCut) {
-                    el.onclick = () => openCutModal(shape); 
-                    el.style.cursor = 'pointer';
-                    el.style.zIndex = 20;
-                    el.style.backgroundColor = 'white';
+                // --- Mode 1: 切割邏輯 ---
+                if (currentState.mode === 'cut' && shape.type === 'initial') {
+                    if (shape.isCut) {
+                         el.classList.add('cut-original'); // 線框模式
+                         el.style.zIndex = 10;
+                    } else {
+                         // 待切割長方形 - 移除 onclick，改由 endDrag 判斷是否為點擊
+                        el.style.cursor = 'pointer';
+                        el.style.zIndex = 20;
+                        el.style.backgroundColor = 'white';
+                    }
                 }
                 // Mode 1: 剩餘邊角料
                 else if (currentState.mode === 'cut' && shape.type === 'remainder') {
@@ -547,24 +578,23 @@
                     };
                 }
 
-                // 添加拖曳事件
-                if (currentState.mode === 'compose' && shape.type !== 'supply') {
-                    el.onpointerdown = (e) => startDrag(e, shape);
+                // --- 統一拖曳事件 (所有非供應區的積木都需要拖曳功能來整理畫面) ---
+                const isDraggable = (shape.type !== 'supply');
+
+                if (isDraggable) {
+                    el.onpointerdown = (e) => startDrag(e, shape, false, el);
                 }
 
                 canvasContainer.appendChild(el);
             });
 
-            // 僅在合成模式下綁定畫布上的拖曳結束事件
-            if (currentState.mode === 'compose') {
-                canvasContainer.onpointerup = endDrag;
-                canvasContainer.onpointermove = onDrag;
-                canvasContainer.onpointercancel = endDrag;
-            } else {
-                canvasContainer.onpointerup = null;
-                canvasContainer.onpointermove = null;
-                canvasContainer.onpointercancel = null;
-            }
+            // 綁定拖曳結束事件到外層 Viewport
+            canvasViewport.onpointerup = endDrag;
+            canvasViewport.onpointermove = onDrag;
+            canvasViewport.onpointercancel = endDrag;
+            
+            // 確保縮放狀態正確顯示
+            updateScaleDisplay(); 
         };
 
         // 清除畫布
@@ -583,6 +613,7 @@
             document.getElementById('compose-unit-length').value = '1';
             document.getElementById('compose-unit-width').value = '1';
             document.getElementById('supply-area').innerHTML = '';
+            clearDrawing(); // 清除塗鴉層 (新增)
             renderCanvas();
             closeConfirmModal();
             showMessage('畫面已重置。', false);
@@ -598,14 +629,11 @@
         
         // 輔助函數：找到一個不與現有形狀重疊的起始位置
         const findNewPlacement = (l, w) => {
-            const canvasRect = canvasContainer.getBoundingClientRect();
-            // 由於 CSS min-height 是 800px，我們以 GRID_SIZE 計算最大可容納單元格數
-            const canvasWidthUnits = Math.floor(canvasRect.width / GRID_SIZE) - 1;
-            const canvasHeightUnits = Math.floor(canvasRect.height / GRID_SIZE) - 1;
+            // 由於內容區是 3000x3000，我們只在左上角 (0,0) 附近的區域尋找
+            const searchLimitUnits = 50; 
 
-            // 簡單策略：從 (1, 1) 開始，掃描第一個不重疊的 GRID_SIZE 網格點
-            for (let y = 1; y < canvasHeightUnits - w; y++) {
-                for (let x = 1; x < canvasWidthUnits - l; x++) {
+            for (let y = 1; y < searchLimitUnits - w; y++) {
+                for (let x = 1; x < searchLimitUnits - l; x++) {
                     const newShapeBoundary = {
                         x: x * GRID_SIZE,
                         y: y * GRID_SIZE,
@@ -642,13 +670,11 @@
                 return;
             }
             
-            // 清除之前的模式維度設定，因為每個長方形的維度可能不同
             currentState.dims = { length, width };
+            const groupId = 'group-' + Date.now(); // 為新的長方形定義群組 ID
 
-            // 找到不重疊的位置，讓不同的長方形可以並排比較
             const { x: newX, y: newY } = findNewPlacement(length, width);
 
-            // 建立一個初始大矩形
             const initialShape = {
                 id: 'initial-' + Date.now(),
                 type: 'initial',
@@ -657,8 +683,9 @@
                 x: newX,
                 y: newY,
                 color: 'white',
-                isCut: false, // 尚未被切割
-                isInitial: true // 標記為原始待切割
+                isCut: false, 
+                isInitial: true,
+                groupId: groupId // 賦予群組 ID
             };
             currentState.shapes.push(initialShape);
             renderCanvas();
@@ -666,9 +693,9 @@
         };
 
         const openCutModal = (shape) => {
-            if (shape.isCut) return; // 已切割的不能再點擊
+            if (shape.isCut) return; 
             cutTargetShape = shape;
-            document.getElementById('cut-square-size').value = 1; // 預設值
+            document.getElementById('cut-square-size').value = 1; 
             document.getElementById('cut-info').textContent = `目標長方形尺寸: ${shape.l} (長) x ${shape.w} (寬)`;
 
             document.getElementById('cut-modal').classList.remove('hidden');
@@ -691,9 +718,9 @@
                 return;
             }
 
-            // 1. 將原始大矩形標記為「已切割」並移除可點擊屬性
+            // 1. 將原始大矩形標記為「已切割」
             target.isCut = true;
-            target.isInitial = false; // 不再接受點擊切割
+            const groupId = target.groupId; // 獲取群組 ID
 
             let currentL = target.l;
             let currentW = target.w;
@@ -718,6 +745,7 @@
                         y: currentY + j * squareSize * GRID_SIZE,
                         color: 'white',
                         isSquare: true,
+                        groupId: groupId // 繼承群組 ID
                     };
                     currentState.shapes.push(newSquare);
                     cutCount++;
@@ -738,7 +766,8 @@
                     x: currentX + numL * squareSize * GRID_SIZE,
                     y: currentY,
                     color: 'red',
-                    isSquare: false
+                    isSquare: false,
+                    groupId: groupId // 繼承群組 ID
                 };
                 currentState.shapes.push(remainderShape);
                 cutCount++;
@@ -754,7 +783,8 @@
                     x: currentX,
                     y: currentY + numW * squareSize * GRID_SIZE,
                     color: 'red',
-                    isSquare: false
+                    isSquare: false,
+                    groupId: groupId // 繼承群組 ID
                 };
                 currentState.shapes.push(remainderShape);
                 cutCount++;
@@ -811,35 +841,37 @@
             supplyElement.style.lineHeight = `${w * GRID_SIZE}px`;
             supplyElement.style.textAlign = 'center';
             supplyElement.style.fontSize = '12px';
-            supplyElement.style.position = 'relative'; // 確保網格樣式顯示
-            supplyElement.style.zIndex = 10; // 確保在供應區可見
+            supplyElement.style.position = 'relative'; 
+            supplyElement.style.zIndex = 10; 
 
             // 複製事件 (從供應區拖曳時)
             supplyElement.onpointerdown = (e) => {
-                e.stopPropagation(); // 阻止冒泡到畫布的 endDrag
+                e.stopPropagation(); 
                 
-                // 創建一個新的 shape 實例並開始拖曳
+                // 1. 創建一個新的 shape 實例
                 const newShape = {
                     id: 'block-' + Date.now(),
                     type: 'block',
                     l: l,
                     w: w,
-                    x: e.clientX, // 暫時設置為點擊位置
-                    y: e.clientY,
+                    // 初始位置設定在畫布左上角，等待 startDrag 調整
+                    x: canvasViewport.scrollLeft + 50, 
+                    y: canvasViewport.scrollTop + 50, 
                     color: 'white',
                     isSquare: l === w,
                     isDragging: true
                 };
 
                 currentState.shapes.push(newShape);
-                renderCanvas(); // 渲染新的 shape
+                renderCanvas(); 
                 
-                // 找到新渲染的 DOM 元素
+                // 2. 找到新渲染的 DOM 元素並開始拖曳
                 const el = document.getElementById(newShape.id);
                 if (el) {
-                    startDrag(e, newShape, true, el);
+                    // 傳遞 isNew=true 給 startDrag
+                    startDrag(e, newShape, true, el); 
                 } else {
-                     currentState.shapes.pop(); // 失敗則移除
+                     currentState.shapes.pop(); 
                 }
             };
 
@@ -857,8 +889,8 @@
                 w: shape.w,
                 x: shape.x + GRID_SIZE, // 稍微偏移
                 y: shape.y + GRID_SIZE,
-                color: 'white', // 複製出來的是普通白色積木
-                isSquare: false, // 複製出來後不再自動是紅色，除非重新組合
+                color: 'white', 
+                isSquare: false, 
                 isDragging: false 
             };
             currentState.shapes.push(newShape);
@@ -876,7 +908,11 @@
 
         // 拖曳開始
         const startDrag = (e, shape, isNew = false, el = null) => {
-            if (currentState.mode !== 'compose') return;
+            // 如果當前是繪圖工具，則阻止積木拖曳 (雙重檢查，CSS 應已處理)
+            if (currentTool !== 'select') return;
+            
+            // 所有非供應區的積木都可以拖曳
+            if (shape.type === 'supply') return;
 
             // 確保是左鍵點擊 (或觸摸開始)
             if (e.button !== 0 && !e.pointerType.includes('touch')) return; 
@@ -884,11 +920,61 @@
             e.stopPropagation();
 
             draggingShape = shape;
-            const rect = (el || document.getElementById(shape.id)).getBoundingClientRect();
+            const viewportRect = canvasViewport.getBoundingClientRect();
             
-            // 計算拖曳偏移量 (點擊點相對於形狀左上角的偏移)
-            dragOffset.x = e.clientX - rect.left;
-            dragOffset.y = e.clientY - rect.top;
+            // 計算點擊點在【未縮放】的內容區的座標
+            const clientXUnscaled = (e.clientX - viewportRect.left + canvasViewport.scrollLeft) / currentScale;
+            const clientYUnscaled = (e.clientY - viewportRect.top + canvasViewport.scrollTop) / currentScale;
+
+            // 記錄起始點，用於區分點擊還是拖曳
+            dragStartPos.x = clientXUnscaled;
+            dragStartPos.y = clientYUnscaled;
+
+            // --- 修正新積木的初始拖曳位置 ---
+            if (isNew) {
+                 // 計算讓積木中心大致對齊游標
+                 const newX = clientXUnscaled - shape.l * GRID_SIZE / 2; 
+                 const newY = clientYUnscaled - shape.w * GRID_SIZE / 2;
+                 
+                 // 立即更新 shape 的位置
+                 shape.x = newX;
+                 shape.y = newY;
+                 
+                 // 更新 DOM 的位置
+                 if (el) {
+                    el.style.left = `${newX}px`;
+                    el.style.top = `${newY}px`;
+                 }
+                 // 重新計算 dragOffset 確保從此點開始平滑拖曳
+                 dragOffset.x = clientXUnscaled - newX;
+                 dragOffset.y = clientYUnscaled - newY;
+
+            } else {
+                // 計算拖曳偏移量 (點擊點相對於形狀左上角的偏移)
+                dragOffset.x = clientXUnscaled - shape.x; 
+                dragOffset.y = clientYUnscaled - shape.y;
+            }
+            // --- 修正結束 ---
+
+
+            // --- 群組拖曳邏輯 (僅限 Mode 1) ---
+            groupToMove = [];
+            groupOffset = { x: 0, y: 0 };
+            
+            if (currentState.mode === 'cut' && shape.groupId) {
+                // 這是 Mode 1 中已切割的積木（或未切割的原矩形）
+                groupToMove = currentState.shapes.filter(s => s.groupId === shape.groupId);
+                
+                // 計算群組內其他積木相對於被拖曳積木的固定偏移量
+                groupToMove.forEach(s => {
+                    s.offsetX = s.x - shape.x;
+                    s.offsetY = s.y - shape.y;
+                });
+            } else {
+                 // Mode 2 或 Mode 1 中切割前的原矩形，單獨移動
+                 groupToMove = [shape];
+            }
+
 
             // 將形狀移到最上層
             (el || document.getElementById(shape.id)).style.zIndex = 40; 
@@ -898,61 +984,120 @@
         const onDrag = (e) => {
             if (!draggingShape) return;
             
-            e.preventDefault(); // 防止滾動等瀏覽器默認行為
+            e.preventDefault(); 
 
-            const canvasRect = canvasContainer.getBoundingClientRect();
+            const viewportRect = canvasViewport.getBoundingClientRect();
             
-            let newX = e.clientX - canvasRect.left - dragOffset.x;
-            let newY = e.clientY - canvasRect.top - dragOffset.y;
+            // 計算當前鼠標/觸摸點在【未縮放】的內容區的座標
+            const clientXUnscaled = (e.clientX - viewportRect.left + canvasViewport.scrollLeft) / currentScale;
+            const clientYUnscaled = (e.clientY - viewportRect.top + canvasViewport.scrollTop) / currentScale;
 
-            // 實時更新形狀位置 (不吸附)
+            // 1. 計算新的主拖曳 shape 邏輯位置
+            let newX = clientXUnscaled - dragOffset.x;
+            let newY = clientYUnscaled - dragOffset.y;
+
+            // 2. 實時更新主 shape 位置
             draggingShape.x = newX;
             draggingShape.y = newY;
+            
+            // 3. 實時更新 DOM 元素位置 (包括群組中的其他元素)
+            const dx_total = newX - dragStartPos.x;
+            const dy_total = newY - dragStartPos.y;
 
-            // 更新 DOM 元素位置
-            const el = document.getElementById(draggingShape.id);
-            if (el) {
-                el.style.left = `${newX}px`;
-                el.style.top = `${newY}px`;
-                el.style.boxShadow = '0 8px 20px rgba(0, 0, 0, 0.3)'; // 拖曳時增加陰影
-            }
+            groupToMove.forEach(s => {
+                const el = document.getElementById(s.id);
+                if (el) {
+                    if (s === draggingShape) {
+                        // 主元素已在上面更新
+                        el.style.left = `${draggingShape.x}px`;
+                        el.style.top = `${draggingShape.y}px`;
+                        el.style.boxShadow = '0 8px 20px rgba(0, 0, 0, 0.3)';
+                    } else if (s.groupId === draggingShape.groupId && currentState.mode === 'cut') {
+                        // 群組元素根據主元素和初始偏移量計算新位置
+                        const groupNewX = newX + s.offsetX;
+                        const groupNewY = newY + s.offsetY;
+
+                        s.x = groupNewX;
+                        s.y = groupNewY;
+
+                        el.style.left = `${groupNewX}px`;
+                        el.style.top = `${groupNewY}px`;
+                    }
+                }
+            });
         };
 
         // 拖曳結束 (包括 pointerup 和 pointercancel)
         const endDrag = (e) => {
             if (!draggingShape) return;
-            
-            // 處理釋放時的邏輯
-            
-            // 1. 吸附到網格 (D. 畫面上的長方形具備自動貼齊的功能)
-            const snappedPos = findNearestGridPosition(draggingShape.x, draggingShape.y);
-            draggingShape.x = snappedPos.x;
-            draggingShape.y = snappedPos.y;
 
-            // 2. 移除拖曳時的陰影
-            const el = document.getElementById(draggingShape.id);
-            if (el) {
-                el.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
-                el.style.zIndex = 30;
+            // 儲存最終未對齊網格的主 shape 位置
+            const finalX = draggingShape.x;
+            const finalY = draggingShape.y;
+
+            // 計算最終點位，用於區分點擊還是拖曳
+            const viewportRect = canvasViewport.getBoundingClientRect();
+            const clientXUnscaled = (e.clientX - viewportRect.left + canvasViewport.scrollLeft) / currentScale;
+            const clientYUnscaled = (e.clientY - viewportRect.top + canvasViewport.scrollTop) / currentScale;
+
+            // 檢查是否為「點擊」(位移小於 5 像素)
+            const dx = Math.abs(clientXUnscaled - dragStartPos.x);
+            const dy = Math.abs(clientYUnscaled - dragStartPos.y);
+            const isClick = dx < 5 && dy < 5; 
+
+            // 如果是「點擊」且目標是「未切割的初始長方形」 (Mode 1)
+            if (isClick && draggingShape.type === 'initial' && !draggingShape.isCut) {
+                const clickedShape = draggingShape; 
+                draggingShape = null; 
+                groupToMove = [];
+                openCutModal(clickedShape); // 開啟切割彈窗
+                return; // 結束，不執行標準拖曳和貼齊邏輯
             }
+            
+            // --- 標準拖曳和貼齊邏輯 ---
+            
+            // 1. 吸附主元素到網格
+            const snappedPos = findNearestGridPosition(finalX, finalY);
+            const snapDeltaX = snappedPos.x - finalX;
+            const snapDeltaY = snappedPos.y - finalY;
+            
+            // 2. 應用網格貼齊到整個群組
+            groupToMove.forEach(s => {
+                // 將所有元素的位置加上貼齊偏移量
+                s.x += snapDeltaX;
+                s.y += snapDeltaY;
+                
+                // 移除拖曳時的陰影並設置 Z-index
+                const el = document.getElementById(s.id);
+                if (el) {
+                    el.style.left = `${s.x}px`;
+                    el.style.top = `${s.y}px`;
+                    el.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.1)';
+                    el.style.zIndex = 30;
+                }
+            });
 
-            // 3. 檢查並更新畫布上的正方形狀態 (E. 組合起來的長方形具備正方形的特徵，會自動變成紅色)
-            detectCompositeSquares();
+
+            // 3. 僅在「小組大」模式下，檢查並更新正方形狀態
+            if (currentState.mode === 'compose') {
+                detectCompositeSquares();
+            }
             
             // 4. 重設狀態
             draggingShape = null;
+            groupToMove = [];
             dragOffset = { x: 0, y: 0 };
-
-            // 5. 重新渲染以確保狀態和位置正確更新 (此呼叫確保 isSquare 類別被正確套用)
+            groupOffset = { x: 0, y: 0 };
+            
+            // 5. 重新渲染以確保狀態和位置正確更新 (很重要，特別是 Mode 2 變色)
             renderCanvas();
         };
 
-        // 輔助函數：檢查所有積木是否形成一個完整的正方形 (Fix for E)
+        // 輔助函數：檢查所有積木是否形成一個完整的正方形
         const detectCompositeSquares = () => {
-            // 只考慮 type: 'block' 的形狀
             const blocks = currentState.shapes.filter(s => s.type === 'block');
-
-            // 預先將所有積木的 isSquare 狀態重置為 false
+            
+            // 預設將所有積木的 isSquare 設為 false
             blocks.forEach(s => {
                 s.isSquare = false;
             });
@@ -961,7 +1106,7 @@
                 return;
             }
 
-            // 1. 找到整個組合體的邊界 (使用已貼齊的像素座標)
+            // 1. 找到整個組合體的邊界 (像素座標)
             let minX = blocks[0].x, minY = blocks[0].y;
             let maxX = blocks[0].x + blocks[0].l * GRID_SIZE;
             let maxY = blocks[0].y + blocks[0].w * GRID_SIZE;
@@ -990,20 +1135,26 @@
                 // 只有當總面積相等（即沒有空隙）且是正方形時
                 if (totalBlockArea === compositeArea) {
                     
-                    // 4. 標記為正方形
+                    // 4. 標記為正方形 (只標記那些剛好在邊界內的積木)
+                    let squareDetected = false;
                     blocks.forEach(s => {
-                        // 只標記那些確實位於這個組合邊界內的積木
-                        if (s.x >= minX && s.x + s.l * GRID_SIZE <= maxX && 
-                            s.y >= minY && s.y + s.w * GRID_SIZE <= maxY) {
+                        // 檢查積木的四個邊界是否與組合成的正方形邊界對齊
+                        const isContained = 
+                            s.x >= minX && s.x + s.l * GRID_SIZE <= maxX && 
+                            s.y >= minY && s.y + s.w * GRID_SIZE <= maxY;
+
+                        if (isContained) {
                             s.isSquare = true;
+                            squareDetected = true;
                         }
                     });
-                    showMessage(`太棒了！您組合出了一個 ${totalL}x${totalW} 的正方形！`, false);
+
+                    if (squareDetected) {
+                         showMessage(`太棒了！您組合出了一個 ${totalL}x${totalW} 的正方形！`, false);
+                    }
                     return;
                 }
             }
-            
-            // 如果不是正方形或未填滿， isSquare 已經是 false，無需額外操作
         };
         
         // 確保在腳本載入後，所有事件處理器都是可用的
@@ -1017,12 +1168,17 @@
         window.newScreen = newScreen;
         window.closeConfirmModal = closeConfirmModal;
         window.renderSupplyArea = renderSupplyArea;
-        window.saveState = saveState;
-        window.loadState = loadState;
         window.downloadScreen = downloadScreen;
         window.duplicateShape = duplicateShape;
         window.onDrag = onDrag;
         window.endDrag = endDrag; 
+        window.handleScaleChange = handleScaleChange; // 暴露縮放功能
+        
+        // 暴露繪圖工具功能
+        window.setTool = setTool;
+        window.updateBrushSize = updateBrushSize;
+        window.clearDrawing = clearDrawing;
+
 
     </script>
 </body>
